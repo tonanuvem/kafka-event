@@ -316,7 +316,7 @@ TXT
     for _ in $(seq 1 30); do
         estado=$(docker exec kafka /opt/kafka/bin/kafka-consumer-groups.sh \
             --bootstrap-server localhost:19092 --describe --group grupo-categoriza --state \
-            2>/dev/null | awk 'NR>1 && NF {print $(NF-1)}' | head -1)
+            2>/dev/null | awk '$1 == "grupo-categoriza" {print $(NF-1)}' | head -1)
         case "$estado" in
             Empty|Dead) break ;;
         esac
