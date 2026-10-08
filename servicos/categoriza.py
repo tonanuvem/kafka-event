@@ -33,6 +33,7 @@ import httpx
 from qdrant_client import models
 
 import re
+import unicodedata
 
 import comum
 
@@ -42,6 +43,19 @@ registro = comum.log("categoriza")
 # Nao diz nada sobre o que foi comprado e so atrapalha o embedding.
 PREFIXO_ADQUIRENTE = re.compile(r"^[A-Z0-9]{2,8}\s?\*\s?")
 PARCELA = re.compile(r"\bPARC\s+\d{2}/\d{2}\b", re.I)
+
+
+def sem_acento(texto):
+    """'Educação' -> 'Educacao'.
+
+    O modelo responde em portugues COM acento, e as categorias do lab
+    sao escritas sem. Sem esta normalizacao, uma resposta correta como
+    'Educação' seria recusada e viraria 'Outros'.
+    """
+    return "".join(
+        c for c in unicodedata.normalize("NFD", texto)
+        if unicodedata.category(c) != "Mn"
+    )
 
 
 def normalizar(descricao):
@@ -72,6 +86,22 @@ ESPERA_LOTE = 4.0  # segundos sem mensagem nova antes de fechar o lote
 # NORTE"). Mandar isso como exemplo para o LLM PIORA a resposta -- RAG
 # com recuperacao ruim e pior do que RAG nenhum. Entao filtramos.
 LIMIAR_EXEMPLO = float(os.environ.get("LIMIAR_EXEMPLO", "0.72"))
+
+# Mesmo acima do limiar, a recuperacao so e confiavel se os vizinhos
+# CONCORDAREM entre si. Quando os tres primeiros apontam categorias
+# diferentes, o que se tem e um vetor "hub" -- proximo de tudo e util
+# para nada. No lab, "CLINICA VIDA PLENA" se comporta assim: aparece
+# como vizinho de consultas sem relacao nenhuma. Nesse caso e melhor
+# nao sugerir exemplo e deixar o modelo decidir pelo guia.
+def exemplos_confiaveis(vizinhos):
+    fortes = [v for v in vizinhos if v["score"] >= LIMIAR_EXEMPLO][:3]
+    if not fortes:
+        return []
+    categorias = {v["categoria"] for v in fortes}
+    if len(categorias) == len(fortes) and len(fortes) > 1:
+        # Todos discordam entre si: recuperacao sem sinal.
+        return []
+    return fortes
 
 # O que cada categoria significa. Com vizinho ruim, e isto que sustenta
 # a decisao do modelo.
@@ -120,7 +150,7 @@ def perguntar_ao_llm(pendentes):
     for n, item in enumerate(pendentes, start=1):
         # So entra como exemplo o vizinho confiavel. Vizinho fraco e
         # ruido e empurra o modelo para a categoria errada.
-        bons = [v for v in item["vizinhos"] if v["score"] >= LIMIAR_EXEMPLO][:3]
+        bons = exemplos_confiaveis(item["vizinhos"])
         descricao = normalizar(item["compra"]["descricao"])
         if bons:
             exemplos = ", ".join(f"{v['descricao']}={v['categoria']}" for v in bons)
@@ -150,13 +180,15 @@ def perguntar_ao_llm(pendentes):
     resposta.raise_for_status()
     bruto = resposta.json()["response"]
 
+    # Indice sem acento e sem caixa -> o nome canonico da categoria.
+    canonico = {sem_acento(c).lower(): c for c in CATEGORIAS}
+
     por_indice = {}
     for r in json.loads(bruto).get("resultados", []):
-        categoria = str(r.get("categoria", "")).strip()
+        bruta = str(r.get("categoria", "")).strip()
         # O modelo as vezes inventa categoria. Nesse caso cai em Outros,
         # em vez de poluir o relatorio com um rotulo inexistente.
-        if categoria not in CATEGORIAS:
-            categoria = "Outros"
+        categoria = canonico.get(sem_acento(bruta).lower(), "Outros")
         por_indice[int(r["n"])] = categoria
     return por_indice
 
