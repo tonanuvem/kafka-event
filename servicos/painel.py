@@ -12,6 +12,7 @@ o que ja e uma demonstracao de replay.
 """
 import json
 import threading
+import uuid
 from collections import defaultdict
 
 from fastapi import FastAPI
@@ -61,11 +62,22 @@ CORES = [
 
 
 def consumir():
+    # Grupo NOVO a cada partida, de proposito.
+    #
+    # O estado do painel vive em memoria, entao ele precisa reler o
+    # topico inteiro ao subir. Com um grupo fixo isso nao acontece: o
+    # Kafka retoma do ultimo offset commitado e o painel sobe vazio --
+    # auto.offset.reset=earliest so vale quando NAO existe offset
+    # gravado para o grupo.
+    #
+    # Esta e a forma classica de reconstruir uma projecao a partir do
+    # log: grupo efemero, leitura desde o inicio.
+    grupo = "painel-%s" % uuid.uuid4().hex[:8]
     consumidor = comum.esperar(
         "kafka",
-        lambda: comum.consumidor_kafka("grupo-painel", comum.TOPICO_CATEGORIZADAS, do_inicio=True),
+        lambda: comum.consumidor_kafka(grupo, comum.TOPICO_CATEGORIZADAS, do_inicio=True),
     )
-    registro.info("painel consumindo %s", comum.TOPICO_CATEGORIZADAS)
+    registro.info("painel consumindo %s | grupo efemero %s", comum.TOPICO_CATEGORIZADAS, grupo)
 
     while True:
         msg = consumidor.poll(1.0)
