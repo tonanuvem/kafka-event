@@ -130,7 +130,7 @@ def exemplos_confiaveis(vizinhos):
 # na fatura. E justamente essa ponte que faltava: medindo, a precisao
 # da busca semantica subiu de 23% para 83% so por indexar isto junto.
 DEFINICOES_CATEGORIA = {
-    "Transporte": "combustivel, posto, estacionamento, app de corrida, taxi, pedagio, onibus",
+    "Transporte": "combustivel, posto de gasolina, estacionamento, corrida de aplicativo, uber, taxi, pedagio, onibus, transporte urbano",
     "Alimentacao": "restaurante, bar, lanchonete, padaria, delivery de comida, comer fora de casa, loja de conveniencia",
     "Mercado": "supermercado, mercado, acougue, hortifruti, laticinios, compras do mes, feira",
     "Saude": "farmacia, drogaria, remedio, clinica, laboratorio, exame, suplemento, plano de saude",

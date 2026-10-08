@@ -117,12 +117,28 @@ def enviar_fatura(banco: str = "azul") -> str:
 
 
 # --------------------------------------------------------------- Qdrant
-# Acima deste score, a pergunta e considerada "sobre uma categoria" e a
-# busca passa a ser filtrada por ela. Abaixo, busca-se em tudo: uma
-# pergunta como "compras acima de 500 reais" nao e sobre categoria
-# nenhuma, e forcar um filtro ali so daria resposta errada com cara de
-# certa.
-LIMIAR_ROTEAMENTO = float(os.environ.get("LIMIAR_ROTEAMENTO", "0.45"))
+# Quando filtrar por categoria, e quando nao filtrar.
+#
+# "compras acima de 500 reais" nao e uma pergunta sobre categoria, e
+# forcar um filtro ali daria resposta errada com cara de certa. O
+# criterio para distinguir foi MEDIDO, nao escolhido:
+#
+#   score absoluto da 1a categoria
+#     perguntas sobre categoria : 0,513 a 0,926
+#     perguntas que nao sao     : ate 0,750   -> NAO separa
+#
+#   MARGEM entre a 1a e a 2a categoria
+#     perguntas sobre categoria : 7 de 8 acima de 0,08
+#     perguntas que nao sao     : todas abaixo de 0,078  -> SEPARA
+#
+# Faz sentido: quando a pergunta e sobre um assunto, uma categoria se
+# destaca. Quando nao e, varias ficam igualmente mornas -- e e esse
+# empate, nao o valor absoluto, que denuncia a ausencia de assunto.
+#
+# A unica pergunta de categoria que fica abaixo do corte e justamente
+# uma que o roteador erraria; abster-se ali e o comportamento correto.
+MARGEM_MINIMA = float(os.environ.get("MARGEM_ROTEAMENTO", "0.08"))
+SCORE_MINIMO = float(os.environ.get("SCORE_ROTEAMENTO", "0.50"))
 
 
 def _cosseno(a, b):
@@ -148,11 +164,20 @@ def _rotear(vetor_pergunta):
     vetores = comum.vetorizar(
         ["%s: %s" % (n, DEFINICOES_CATEGORIA[n]) for n in nomes]
     )
-    melhor, score = max(
+    pontuadas = sorted(
         ((n, _cosseno(vetor_pergunta, v)) for n, v in zip(nomes, vetores)),
-        key=lambda t: t[1],
+        key=lambda t: -t[1],
     )
-    return (melhor if score >= LIMIAR_ROTEAMENTO else None), round(score, 4)
+    (melhor, primeiro), (_, segundo) = pontuadas[0], pontuadas[1]
+    margem = primeiro - segundo
+
+    confiavel = margem >= MARGEM_MINIMA and primeiro >= SCORE_MINIMO
+    return (melhor if confiavel else None), {
+        "categoria": melhor,
+        "score": round(primeiro, 4),
+        "margem": round(margem, 4),
+        "filtrou": confiavel,
+    }
 
 
 @servidor.tool()
@@ -172,11 +197,11 @@ def buscar_gastos(pergunta: str, limite: int = 10, categoria: str = "") -> str:
     vetor = comum.vetorizar([pergunta])[0]
 
     if categoria.lower() in ("todas", "all"):
-        alvo, score = None, None
+        alvo, roteamento = None, {"filtrou": False, "motivo": "pedido pelo chamador"}
     elif categoria:
-        alvo, score = categoria, None
+        alvo, roteamento = categoria, {"filtrou": True, "motivo": "informado pelo chamador"}
     else:
-        alvo, score = _rotear(vetor)
+        alvo, roteamento = _rotear(vetor)
 
     filtro = None
     if alvo:
@@ -207,8 +232,8 @@ def buscar_gastos(pergunta: str, limite: int = 10, categoria: str = "") -> str:
             "pergunta": pergunta,
             # Exposto de proposito: o aluno ve a decisao de roteamento e
             # consegue depurar quando a resposta nao faz sentido.
-            "roteada_para": alvo or "(sem filtro de categoria)",
-            "score_do_roteamento": score,
+            "roteada_para": alvo or "(sem filtro: busca em todas)",
+            "roteamento": roteamento,
             "encontradas": len(resultado),
             "soma": round(sum(r["valor"] or 0 for r in resultado), 2),
             "compras": resultado,
