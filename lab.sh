@@ -306,17 +306,50 @@ TXT
     read -r -p "Reprocessar todas as compras ja extraidas? [s/N] " r
     [[ "${r:-n}" =~ ^[sS]$ ]] || { aviso "cancelado"; return 0; }
 
-    # O grupo tem de estar PARADO para mover o offset.
+    # O Kafka so deixa mover o offset de um grupo INATIVO. Parar os
+    # conteineres nao basta: a sessao do consumidor ainda vive no broker
+    # por alguns segundos. Entao esperamos o grupo sair de "Stable".
     echo "parando os consumidores do grupo..."
     $COMPOSE stop consumidor_categoriza_compras >/dev/null 2>&1
 
-    docker exec kafka /opt/kafka/bin/kafka-consumer-groups.sh \
+    local estado=""
+    for _ in $(seq 1 30); do
+        estado=$(docker exec kafka /opt/kafka/bin/kafka-consumer-groups.sh \
+            --bootstrap-server localhost:19092 --describe --group grupo-categoriza --state \
+            2>/dev/null | awk 'NR>1 && NF {print $(NF-1)}' | head -1)
+        case "$estado" in
+            Empty|Dead) break ;;
+        esac
+        printf "."
+        sleep 2
+    done
+    echo
+
+    case "$estado" in
+        Empty|Dead) ok "grupo inativo (estado: $estado)" ;;
+        *) erro "o grupo nao ficou inativo (estado: ${estado:-desconhecido}); abortando"
+           $COMPOSE start consumidor_categoriza_compras >/dev/null 2>&1
+           return 1 ;;
+    esac
+
+    # Guarda a saida: o kafka-consumer-groups.sh imprime o erro e mesmo
+    # assim sai com codigo 0, entao conferir o RC nao basta -- a saida
+    # tem de conter a tabela de NEW-OFFSET.
+    local saida
+    saida=$(docker exec kafka /opt/kafka/bin/kafka-consumer-groups.sh \
         --bootstrap-server localhost:19092 \
         --group grupo-categoriza --topic compras-extraidas \
-        --reset-offsets --to-earliest --execute || {
-            erro "falha ao resetar offsets"; $COMPOSE start consumidor_categoriza_compras; return 1; }
+        --reset-offsets --to-earliest --execute 2>&1)
 
-    $COMPOSE start consumidor_categoriza_compras >/dev/null
+    if echo "$saida" | grep -qiE "^Error|Assignments can only"; then
+        erro "falha ao resetar os offsets:"
+        echo "$saida" | sed 's/^/   /'
+        $COMPOSE start consumidor_categoriza_compras >/dev/null 2>&1
+        return 1
+    fi
+
+    echo "$saida" | sed 's/^/   /'
+    $COMPOSE start consumidor_categoriza_compras >/dev/null 2>&1
     ok "offsets zerados: o historico esta sendo reprocessado"
     echo "Acompanhe o lag no Console e o Painel sendo refeito."
 }
