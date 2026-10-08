@@ -103,8 +103,78 @@ cmd_subir() {
     cmd_urls
 }
 
+# Detecta um Ollama JA instalado no host (alguns labs da FIAP instalam
+# como servico systemd). Nesse caso nao faz sentido subir um segundo
+# dentro de um conteiner: seriam ~3 GB de RAM e ~5 GB de imagem
+# duplicados, numa VM de 8 GB.
+detectar_ollama_do_host() {
+    curl -sf --max-time 4 http://localhost:11434/api/tags >/dev/null 2>&1
+}
+
+# O Ollama do host costuma escutar so em 127.0.0.1, onde os conteineres
+# nao alcancam. Publica tambem na ponte do Docker -- e NAO em 0.0.0.0,
+# que exporia o LLM na internet, ja que o security group do lab e aberto.
+abrir_ollama_para_conteineres() {
+    local destino=/etc/systemd/system/ollama.service.d/lab-kafka.conf
+    sudo mkdir -p "$(dirname "$destino")"
+    sudo tee "$destino" >/dev/null <<'CONF'
+# Adicionado pelo lab kafka-event: permite que os conteineres alcancem
+# o Ollama do host pela ponte do Docker. Nao usa 0.0.0.0 de proposito.
+[Service]
+Environment="OLLAMA_HOST=172.17.0.1:11434"
+Environment="OLLAMA_KEEP_ALIVE=30m"
+Environment="OLLAMA_MAX_LOADED_MODELS=1"
+CONF
+    sudo systemctl daemon-reload && sudo systemctl restart ollama
+    for _ in $(seq 1 20); do
+        curl -sf --max-time 3 http://172.17.0.1:11434/api/tags >/dev/null 2>&1 && return 0
+        sleep 2
+    done
+    return 1
+}
+
 cmd_ia() {
     garantir_env
+
+    # ---------- caminho 1: Ollama ja existe no host ----------
+    if detectar_ollama_do_host; then
+        titulo "USANDO O OLLAMA JA INSTALADO NO HOST"
+        echo "Encontrei um Ollama rodando nesta maquina. Vou usa-lo em vez"
+        echo "de subir outro em conteiner (economiza ~5 GB de imagem e"
+        echo "~3 GB de RAM numa VM de 8 GB)."
+        echo
+
+        local modelos; modelos=$(curl -s http://localhost:11434/api/tags \
+            | grep -o '"name":"[^"]*"' | sed 's/"name":"//;s/"$//')
+        echo "Modelos disponiveis:"; echo "$modelos" | sed 's/^/   /'
+
+        # Prefere o gemma2:2b: mesmo tamanho do gemma:2b e bem melhor em
+        # seguir instrucao e devolver JSON valido.
+        local escolhido
+        escolhido=$(echo "$modelos" | grep -x "gemma2:2b" \
+            || echo "$modelos" | grep -x "gemma:2b" \
+            || echo "$modelos" | head -1)
+        [ -z "$escolhido" ] && { erro "nenhum modelo no Ollama do host"; return 1; }
+
+        echo; ok "modelo escolhido: $escolhido"
+
+        echo "Publicando o Ollama na ponte do Docker..."
+        abrir_ollama_para_conteineres || { erro "nao consegui expor o Ollama aos conteineres"; return 1; }
+        ok "Ollama acessivel em 172.17.0.1:11434"
+
+        sed -i.bak "s|^OLLAMA_MODELO=.*|OLLAMA_MODELO=$escolhido|" .env
+        grep -q '^OLLAMA_URL=' .env \
+            && sed -i.bak "s|^OLLAMA_URL=.*|OLLAMA_URL=http://172.17.0.1:11434|" .env \
+            || echo "OLLAMA_URL=http://172.17.0.1:11434" >> .env
+        rm -f .env.bak
+
+        $COMPOSE up -d consumidor_categoriza_compras || return 1
+        ok "consumidor_categoriza_compras no ar"
+        echo; echo "Agora envie uma fatura:  ./lab.sh enviar azul"
+        return 0
+    fi
+
+    # ---------- caminho 2: subir o Ollama em conteiner ----------
     titulo "SUBINDO O LLM LOCAL (gemma:2b)"
     echo "A imagem traz o modelo embutido (~5 GB), para nao baixar o"
     echo "gemma:2b no meio da aula. A primeira construcao leva ~5 min."
