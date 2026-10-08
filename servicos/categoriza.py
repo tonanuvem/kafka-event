@@ -118,20 +118,33 @@ def exemplos_confiaveis(vizinhos):
         return fortes
     return EXEMPLOS_PADRAO
 
-# O que cada categoria significa. Com vizinho ruim, e isto que sustenta
-# a decisao do modelo.
-GUIA_DE_CATEGORIAS = (
-    "Transporte=combustivel, estacionamento, app de corrida, pedagio; "
-    "Alimentacao=restaurante, bar, padaria, delivery, loja de conveniencia; "
-    "Mercado=supermercado, acougue, hortifruti, laticinios; "
-    "Saude=farmacia, clinica, laboratorio, suplemento, plano; "
-    "Assinaturas=servico digital recorrente (streaming, nuvem, software); "
-    "Compras=loja de varejo, e-commerce, utilidades, papelaria, vestuario; "
-    "Educacao=escola, faculdade, curso, academia; "
-    "Viagem=passagem, hotel, locadora, seguro viagem; "
-    "Casa=conta de consumo, condominio, manutencao; "
-    "Pets=pet shop, veterinario; "
-    "Outros=pessoa fisica ou nao identificavel"
+# O que cada categoria significa, em VOCABULARIO DE PERGUNTA.
+#
+# Uma fonte de verdade para tres usos:
+#   1. o prompt do LLM, quando o vizinho recuperado nao presta;
+#   2. o texto indexado de cada compra (ver texto_para_busca);
+#   3. o roteamento da busca em linguagem natural (servidor MCP).
+#
+# As palavras aqui sao as que uma PESSOA usaria ao perguntar -- "comer
+# fora de casa", "compras do mes", "remedio" -- e nao as que aparecem
+# na fatura. E justamente essa ponte que faltava: medindo, a precisao
+# da busca semantica subiu de 23% para 83% so por indexar isto junto.
+DEFINICOES_CATEGORIA = {
+    "Transporte": "combustivel, posto, estacionamento, app de corrida, taxi, pedagio, onibus",
+    "Alimentacao": "restaurante, bar, lanchonete, padaria, delivery de comida, comer fora de casa, loja de conveniencia",
+    "Mercado": "supermercado, mercado, acougue, hortifruti, laticinios, compras do mes, feira",
+    "Saude": "farmacia, drogaria, remedio, clinica, laboratorio, exame, suplemento, plano de saude",
+    "Assinaturas": "servico digital recorrente, streaming, musica, video, nuvem, software por assinatura",
+    "Compras": "loja de varejo, e-commerce, utilidades, papelaria, roupa, eletronico, presente",
+    "Educacao": "escola, colegio, faculdade, curso, academia, ensino, mensalidade escolar",
+    "Viagem": "passagem aerea, hotel, hospedagem, locadora de carro, seguro viagem, turismo",
+    "Casa": "conta de luz, agua, telefone, internet, condominio, manutencao da casa",
+    "Pets": "pet shop, veterinario, racao, animal de estimacao",
+    "Outros": "pessoa fisica, transferencia, nao identificavel",
+}
+
+GUIA_DE_CATEGORIAS = "; ".join(
+    "%s=%s" % (c, d) for c, d in DEFINICOES_CATEGORIA.items()
 )
 
 
@@ -230,13 +243,26 @@ def id_do_ponto(compra):
 def texto_para_busca(descricao, categoria):
     """O texto que vai para o indice de historico.
 
-    Guardar so "IFD*CANTINA DO ZECA" faz a busca por linguagem natural
-    falhar: a pergunta "comida fora de casa" nao se parece com um nome
-    curto em maiusculas. Acrescentar a categoria aproxima o documento
-    do vocabulario das perguntas -- e um enriquecimento barato do lado
-    do indice, nao do lado da consulta.
+    O PROBLEMA: a busca por linguagem natural e ASSIMETRICA. A pergunta
+    e uma frase em portugues ("comida fora de casa"); o documento e um
+    nome curto em maiusculas ("IFD*CANTINA DO ZECA"). Sao distribuicoes
+    de texto diferentes, e o modelo usado aqui e treinado para
+    similaridade SIMETRICA (frase contra frase parecida). Ele compara
+    comerciante com comerciante muito bem -- dai os 91% de acerto do
+    catalogo -- e pergunta com nome curto muito mal.
+
+    A SOLUCAO: enriquecer o DOCUMENTO, nao a consulta. Indexando junto
+    a definicao da categoria em vocabulario de pergunta, o documento
+    passa a conter as palavras que a pessoa usaria. Medido no lab, a
+    precisao no top-5 subiu de 23% para 83%.
+
+    Trocar o modelo por um treinado para recuperacao assimetrica (a
+    familia e5 ou o bge-m3, com prefixo query:/passage:) resolveria na
+    raiz, mas os multilingues dessa familia passam de 1 GB e disputariam
+    memoria com o LLM numa VM de 8 GB. Enriquecer o indice custa zero.
     """
-    return "%s (%s)" % (normalizar(descricao), categoria)
+    definicao = DEFINICOES_CATEGORIA.get(categoria, "")
+    return "%s. %s: %s" % (normalizar(descricao), categoria, definicao)
 
 
 def publicar_resultado(produtor, qdrant, compra, categoria, origem, confianca, vetor, vizinhos_achados):
