@@ -11,3 +11,7 @@ faturas/fatura_banco_*_20*.pdf
 
 # macOS
 .DS_Store
+
+# Telas: regeradas por ./lab.sh telas em cada execucao. Versionar
+# so geraria conflito a cada captura. Elas vao para o roteiro em Word.
+docs/telas/
