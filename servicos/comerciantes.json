@@ -1,0 +1,197 @@
+{
+  "categorias": [
+    "Alimentacao",
+    "Assinaturas",
+    "Casa",
+    "Compras",
+    "Educacao",
+    "Mercado",
+    "Outros",
+    "Pets",
+    "Saude",
+    "Transporte",
+    "Viagem"
+  ],
+  "comerciantes": [
+    {
+      "descricao": "DL*UBERRIDES",
+      "categoria": "Transporte"
+    },
+    {
+      "descricao": "99POP VIAGEM",
+      "categoria": "Transporte"
+    },
+    {
+      "descricao": "ZUL + CARTAO 7KQ2P",
+      "categoria": "Transporte"
+    },
+    {
+      "descricao": "ESTAC PATIO NORTE",
+      "categoria": "Transporte"
+    },
+    {
+      "descricao": "REDE PARX SHOPPING",
+      "categoria": "Transporte"
+    },
+    {
+      "descricao": "POSTO IPIRANGA CENTRO",
+      "categoria": "Transporte"
+    },
+    {
+      "descricao": "IFD*CANTINA DO ZECA",
+      "categoria": "Alimentacao"
+    },
+    {
+      "descricao": "IFD*IFOOD CLUB",
+      "categoria": "Alimentacao"
+    },
+    {
+      "descricao": "PAYGO*BAR DO TONHO",
+      "categoria": "Alimentacao"
+    },
+    {
+      "descricao": "MP *PASTELARIA LUA",
+      "categoria": "Alimentacao"
+    },
+    {
+      "descricao": "NORTH BAR E GRILL",
+      "categoria": "Alimentacao"
+    },
+    {
+      "descricao": "PANELA DE BARRO REST",
+      "categoria": "Alimentacao"
+    },
+    {
+      "descricao": "PADARIA AURORA SUL",
+      "categoria": "Alimentacao"
+    },
+    {
+      "descricao": "SUPERMERCADO BOA VEZ",
+      "categoria": "Mercado"
+    },
+    {
+      "descricao": "EMPORIO SAO JUDAS",
+      "categoria": "Mercado"
+    },
+    {
+      "descricao": "HORTIFRUTI VILA NOVA",
+      "categoria": "Mercado"
+    },
+    {
+      "descricao": "ACOUGUE DOIS IRMAOS",
+      "categoria": "Mercado"
+    },
+    {
+      "descricao": "DROGARIA SAO JUDAS 0412",
+      "categoria": "Saude"
+    },
+    {
+      "descricao": "FARMA MAIS CENTRO",
+      "categoria": "Saude"
+    },
+    {
+      "descricao": "CLINICA VIDA PLENA",
+      "categoria": "Saude"
+    },
+    {
+      "descricao": "LAB ANALISES CENTRO",
+      "categoria": "Saude"
+    },
+    {
+      "descricao": "NETFLIX ENTRETENIMENTO",
+      "categoria": "Assinaturas"
+    },
+    {
+      "descricao": "DL*GOOGLE YouTubePre",
+      "categoria": "Assinaturas"
+    },
+    {
+      "descricao": "Microsoft*Store",
+      "categoria": "Assinaturas"
+    },
+    {
+      "descricao": "APPLE COM/BILL",
+      "categoria": "Assinaturas"
+    },
+    {
+      "descricao": "AMAZON MUSIC BR",
+      "categoria": "Assinaturas"
+    },
+    {
+      "descricao": "EBN*HOSTINGER WEB",
+      "categoria": "Assinaturas"
+    },
+    {
+      "descricao": "GOOGLE ONE ARMAZENAM",
+      "categoria": "Assinaturas"
+    },
+    {
+      "descricao": "SPOTIFY BR PREMIUM",
+      "categoria": "Assinaturas"
+    },
+    {
+      "descricao": "AMAZON BR *AMAZON BR",
+      "categoria": "Compras"
+    },
+    {
+      "descricao": "MERCADOLIVRE*MERCADOL",
+      "categoria": "Compras"
+    },
+    {
+      "descricao": "SHOPEE *LOJA BRILHO",
+      "categoria": "Compras"
+    },
+    {
+      "descricao": "MAGALU *MAGAZINELUIZ",
+      "categoria": "Compras"
+    },
+    {
+      "descricao": "KALUNGA PAPELARIA 88",
+      "categoria": "Compras"
+    },
+    {
+      "descricao": "COLEGIO MONTE VERDE",
+      "categoria": "Educacao"
+    },
+    {
+      "descricao": "UDEMY BRASIL CURSOS",
+      "categoria": "Educacao"
+    },
+    {
+      "descricao": "GOL LINHAS AEREAS",
+      "categoria": "Viagem"
+    },
+    {
+      "descricao": "AF INTERNET PASSAGEM",
+      "categoria": "Viagem"
+    },
+    {
+      "descricao": "SG CAR RENTAL",
+      "categoria": "Viagem"
+    },
+    {
+      "descricao": "ALLIANZ TRAVEL SEG",
+      "categoria": "Viagem"
+    },
+    {
+      "descricao": "CONTA VIVO FIXO",
+      "categoria": "Casa"
+    },
+    {
+      "descricao": "ENEL SP ENERGIA",
+      "categoria": "Casa"
+    },
+    {
+      "descricao": "ANIMALIA PET SHOP",
+      "categoria": "Pets"
+    },
+    {
+      "descricao": "VET AMIGO FIEL",
+      "categoria": "Pets"
+    },
+    {
+      "descricao": "PAG*M OLIVEIRA ME",
+      "categoria": "Outros"
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+confluent-kafka==2.6.1
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+python-multipart==0.0.20
+boto3==1.36.3
+qdrant-client==1.19.0
+fastembed==0.5.1
+pdfplumber==0.11.5
+httpx==0.28.1
+mcp==1.2.1

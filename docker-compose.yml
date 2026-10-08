@@ -1,0 +1,238 @@
+# ============================================================
+# LAB KAFKA-EVENT : Analisador Inteligente de Faturas
+#
+# Nomes em portugues de proposito: o aluno le o compose e
+# entende o pipeline sem precisar do roteiro.
+#
+#   produtor_envia_fatura      -> publica o EVENTO (so a URL)
+#   consumidor_analisa_faturas -> resgata o PDF no MinIO (claim-check)
+#   consumidor_categoriza_compras -> busca vetorial + IA local
+#   consumidor_notifica_teams  -> card no Teams
+# ============================================================
+
+x-servico-python: &servico-python
+  image: faturas-servicos:latest
+  build:
+    context: ./servicos
+  restart: unless-stopped
+  env_file: .env
+  environment: &ambiente-comum
+    KAFKA_BROKER: kafka:19092
+    S3_ENDPOINT: http://objetos:8333
+    S3_CHAVE: ${S3_CHAVE:-labfiap}
+    S3_SEGREDO: ${S3_SEGREDO:-labfiap123}
+    S3_BUCKET: faturas
+    QDRANT_URL: http://qdrant:6333
+    OLLAMA_URL: ${OLLAMA_URL:-http://ollama:11434}
+    OLLAMA_MODELO: ${OLLAMA_MODELO:-gemma:2b}
+    TOPICO_FATURAS: faturas-recebidas
+    TOPICO_EXTRAIDAS: compras-extraidas
+    TOPICO_CATEGORIZADAS: compras-categorizadas
+    TOPICO_ERROS: compras-com-erro
+    TOPICO_MENSAGENS: lab-mensagens
+
+services:
+
+  # ---------- 1. O BROKER (KRaft: sem Zookeeper) ----------
+  kafka:
+    image: apache/kafka:4.2.2
+    container_name: kafka
+    hostname: kafka
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_LISTENERS: INTERNO://:19092,EXTERNO://:9092,CONTROLADOR://:9093
+      KAFKA_ADVERTISED_LISTENERS: INTERNO://kafka:19092,EXTERNO://${IP_PUBLICO:-localhost}:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNO:PLAINTEXT,EXTERNO:PLAINTEXT,CONTROLADOR:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNO
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLADOR
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      # Heap contido: a VM do lab tem 8 GB e o Ollama precisa de ~3 GB.
+      KAFKA_HEAP_OPTS: -Xmx768m -Xms768m
+    volumes:
+      - dados_kafka:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:19092 >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 15
+      start_period: 20s
+
+  # ---------- 2. UI DO KAFKA (sucessora do Kowl) ----------
+  console:
+    image: redpandadata/console:v3.12.0
+    container_name: console
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_BROKERS: kafka:19092
+      SERVER_LISTENPORT: 8080
+    depends_on:
+      kafka:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ---------- 3. OBJETOS: onde o PDF realmente mora ----------
+  # SeaweedFS fala a API S3. O MinIO foi retirado da distribuicao
+  # publica (imagens e binarios), e o codigo do lab usa boto3 -- o SDK
+  # da AWS -- entao o mesmo codigo roda contra o S3 de verdade.
+  objetos:
+    image: chrislusf/seaweedfs:4.48
+    container_name: objetos
+    # O SeaweedFS dimensiona quantos volumes cabem dividindo o espaco
+    # LIVRE em disco pelo tamanho maximo de volume (30 GB por padrao).
+    # Com volumes grandes, um disco apertado rende 2 ou 3 volumes -- a
+    # colecao padrao consome todos e o bucket nao consegue crescer
+    # ("No writable volumes"). As faturas tem poucos KB, entao volumes
+    # de 64 MB com teto alto resolvem com folga.
+    command: >
+      server -s3 -dir=/data
+      -master.volumeSizeLimitMB=64 -volume.max=16
+    ports:
+      - "8333:8333"   # API S3
+      - "8888:8888"   # navegador de arquivos (web)
+      - "9333:9333"   # painel do cluster
+    environment:
+      AWS_ACCESS_KEY_ID: ${S3_CHAVE:-labfiap}
+      AWS_SECRET_ACCESS_KEY: ${S3_SEGREDO:-labfiap123}
+    volumes:
+      - dados_objetos:/data
+    healthcheck:
+      # O SeaweedFS escuta no IP do conteiner, nao em 127.0.0.1:
+      # por isso o healthcheck usa $(hostname) e nao localhost.
+      test: ["CMD-SHELL", "wget -q -O- http://$$(hostname):9333/cluster/status >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 15s
+    restart: unless-stopped
+
+  # ---------- 4. BANCO VETORIAL ----------
+  qdrant:
+    image: qdrant/qdrant:v1.19.2
+    container_name: qdrant
+    ports:
+      - "6333:6333"
+    volumes:
+      - dados_qdrant:/qdrant/storage
+    restart: unless-stopped
+
+  # ---------- 5. LLM LOCAL ----------
+  # Imagem com o gemma:2b ja embutido: evita um download de 1,7 GB
+  # no meio da aula. Ver infra/Dockerfile.ollama.
+  ollama:
+    image: ${IMAGEM_OLLAMA:-tonanuvem/ollama-gemma2b:latest}
+    build:
+      context: ./infra
+      dockerfile: Dockerfile.ollama
+    container_name: ollama
+    ports:
+      - "11434:11434"
+    environment:
+      OLLAMA_KEEP_ALIVE: 30m
+      OLLAMA_MAX_LOADED_MODELS: 1
+      OLLAMA_NUM_PARALLEL: 1
+    volumes:
+      - dados_ollama:/root/.ollama
+    restart: unless-stopped
+    profiles: ["ia", "completo"]
+
+  # ---------- 6. PREPARACAO (roda uma vez e sai) ----------
+  preparar:
+    <<: *servico-python
+    container_name: preparar
+    command: python -m preparar
+    restart: "no"
+    depends_on:
+      kafka:
+        condition: service_healthy
+      objetos:
+        condition: service_healthy
+
+  # ---------- 7. PRODUTOR ----------
+  produtor_envia_fatura:
+    <<: *servico-python
+    container_name: produtor_envia_fatura
+    command: uvicorn produtor:app --host 0.0.0.0 --port 5001
+    ports:
+      - "5001:5001"
+    volumes:
+      - ./faturas:/app/faturas_exemplo:ro
+    depends_on:
+      preparar:
+        condition: service_completed_successfully
+
+  # ---------- 8. CLAIM-CHECK: resgata o PDF e extrai as linhas ----------
+  consumidor_analisa_faturas:
+    <<: *servico-python
+    command: python -m analisa
+    environment:
+      <<: *ambiente-comum
+      GRUPO: grupo-analisa
+    depends_on:
+      preparar:
+        condition: service_completed_successfully
+
+  # ---------- 9. BUSCA VETORIAL + IA ----------
+  consumidor_categoriza_compras:
+    <<: *servico-python
+    command: python -m categoriza
+    environment:
+      <<: *ambiente-comum
+      GRUPO: grupo-categoriza
+      LIMIAR_CATALOGO: ${LIMIAR_CATALOGO:-0.80}
+      LOTE_IA: ${LOTE_IA:-5}
+    depends_on:
+      preparar:
+        condition: service_completed_successfully
+
+  # ---------- 10. NOTIFICACAO NO TEAMS ----------
+  consumidor_notifica_teams:
+    <<: *servico-python
+    container_name: consumidor_notifica_teams
+    command: python -m notifica
+    environment:
+      <<: *ambiente-comum
+      GRUPO: grupo-notifica
+    depends_on:
+      preparar:
+        condition: service_completed_successfully
+
+  # ---------- 11. PAINEL DE GASTOS (a visao de negocio) ----------
+  painel_de_gastos:
+    <<: *servico-python
+    container_name: painel_de_gastos
+    command: uvicorn painel:app --host 0.0.0.0 --port 3000
+    ports:
+      - "3000:3000"
+    environment:
+      <<: *ambiente-comum
+      GRUPO: grupo-painel
+    depends_on:
+      preparar:
+        condition: service_completed_successfully
+
+  # ---------- 12. SERVIDOR MCP ----------
+  # Fica vivo so para o cliente MCP abrir uma sessao via "docker exec -i".
+  # Cada cliente (Amazon Q, MCP Inspector) ganha seu proprio processo.
+  servidor_mcp_faturas:
+    <<: *servico-python
+    container_name: servidor_mcp_faturas
+    command: sleep infinity
+    environment:
+      <<: *ambiente-comum
+      LIMIAR_CATALOGO: ${LIMIAR_CATALOGO:-0.80}
+    profiles: ["mcp"]
+
+volumes:
+  dados_kafka:
+  dados_objetos:
+  dados_qdrant:
+  dados_ollama:

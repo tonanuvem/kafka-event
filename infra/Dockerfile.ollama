@@ -1,0 +1,24 @@
+# Ollama com o gemma:2b JA baixado.
+#
+# Sem isso, o primeiro evento da aula dispararia um download de ~1,7 GB
+# e 30 alunos baixariam o mesmo modelo ao mesmo tempo. Embutir na imagem
+# troca esse download por um "docker pull" que o Ansible pode deixar em
+# cache na VM antes da aula.
+FROM ollama/ollama:0.5.7
+
+ARG MODELO=gemma:2b
+
+# O "ollama pull" exige o servidor rodando: sobe, baixa, derruba. Tudo
+# numa camada so, senao o modelo nao fica no commit da imagem.
+RUN ollama serve & \
+    for i in $(seq 1 30); do \
+        ollama list >/dev/null 2>&1 && break; \
+        sleep 2; \
+    done; \
+    ollama pull ${MODELO} && \
+    ollama list && \
+    pkill ollama || true
+
+ENV OLLAMA_HOST=0.0.0.0:11434 \
+    OLLAMA_KEEP_ALIVE=30m \
+    OLLAMA_MAX_LOADED_MODELS=1
