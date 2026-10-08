@@ -106,8 +106,19 @@ cmd_subir() {
 cmd_ia() {
     garantir_env
     titulo "SUBINDO O LLM LOCAL (gemma:2b)"
-    echo "A imagem tem ~2,5 GB e ja traz o modelo. O primeiro pull demora."
+    echo "A imagem traz o modelo embutido (~5 GB), para nao baixar o"
+    echo "gemma:2b no meio da aula. A primeira construcao leva ~5 min."
     echo
+
+    # Se a imagem ja estiver publicada no Docker Hub, usa; senao
+    # constroi localmente. O "up" sozinho tentaria o pull e falharia.
+    if ! docker image inspect "${IMAGEM_OLLAMA:-tonanuvem/ollama-gemma2b:latest}" >/dev/null 2>&1; then
+        if ! docker pull -q "${IMAGEM_OLLAMA:-tonanuvem/ollama-gemma2b:latest}" >/dev/null 2>&1; then
+            echo "imagem nao publicada -- construindo localmente..."
+            $COMPOSE --profile ia build ollama || return 1
+        fi
+    fi
+
     $COMPOSE --profile ia up -d ollama || return 1
 
     echo "aguardando o Ollama responder..."
