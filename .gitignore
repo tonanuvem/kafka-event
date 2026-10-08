@@ -8,3 +8,6 @@ __pycache__/
 # Faturas de variacao geradas para o modulo de carga. As duas faturas
 # oficiais do lab ficam versionadas; estas nao.
 faturas/fatura_banco_*_20*.pdf
+
+# macOS
+.DS_Store
