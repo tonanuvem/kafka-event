@@ -208,6 +208,37 @@ def perguntar_ao_llm(pendentes):
     return por_indice
 
 
+# Namespace fixo para gerar IDs estaveis dos pontos no Qdrant.
+NAMESPACE_COMPRA = uuid.UUID("7f1d2c3b-4a59-4e6f-8b70-9c1d2e3f4a5b")
+
+
+def id_do_ponto(compra):
+    """ID DETERMINISTICO, derivado de (fatura, linha).
+
+    Com uuid4() cada reprocessamento criava um ponto novo e o historico
+    duplicava: depois de um ./lab.sh replay, 80 compras viravam 160 e o
+    total dobrava. Com um id estavel, reprocessar SOBRESCREVE.
+
+    Esta e a ideia de idempotencia: processar o mesmo evento duas vezes
+    tem de levar ao mesmo estado final. Num pipeline com replay, isso
+    deixa de ser detalhe e passa a ser requisito.
+    """
+    chave = "%s:%s" % (compra["fatura_id"], compra.get("linha", 0))
+    return str(uuid.uuid5(NAMESPACE_COMPRA, chave))
+
+
+def texto_para_busca(descricao, categoria):
+    """O texto que vai para o indice de historico.
+
+    Guardar so "IFD*CANTINA DO ZECA" faz a busca por linguagem natural
+    falhar: a pergunta "comida fora de casa" nao se parece com um nome
+    curto em maiusculas. Acrescentar a categoria aproxima o documento
+    do vocabulario das perguntas -- e um enriquecimento barato do lado
+    do indice, nao do lado da consulta.
+    """
+    return "%s (%s)" % (normalizar(descricao), categoria)
+
+
 def publicar_resultado(produtor, qdrant, compra, categoria, origem, confianca, vetor, vizinhos_achados):
     saida = {
         **compra,
@@ -222,12 +253,17 @@ def publicar_resultado(produtor, qdrant, compra, categoria, origem, confianca, v
     # Indexa na colecao de historico: e o que viabiliza a busca
     # semantica do servidor MCP ("quanto gastei com comida fora?").
     if vetor is not None:
+        # Revetoriza com a categoria junto: o vetor usado na BUSCA do
+        # catalogo nao serve bem para perguntas em linguagem natural.
+        vetor_busca = comum.vetorizar(
+            [texto_para_busca(compra["descricao"], categoria)]
+        )[0]
         qdrant.upsert(
             collection_name=comum.COLECAO_COMPRAS,
             points=[
                 models.PointStruct(
-                    id=uuid.uuid4().hex,
-                    vector=vetor,
+                    id=id_do_ponto(compra),
+                    vector=vetor_busca,
                     payload={
                         "descricao": compra["descricao"],
                         "categoria": categoria,
