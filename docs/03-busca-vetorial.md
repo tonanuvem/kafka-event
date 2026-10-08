@@ -149,3 +149,83 @@ O lab usa `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`:
 384 dimensões, 220 MB, multilíngue (importante: as descrições estão em
 português). O modelo vem **embutido na imagem**, para o primeiro evento
 da aula não disparar um download e parecer travamento.
+
+---
+
+# Apêndice: consertando a busca por linguagem natural
+
+A primeira versão deste laboratório tinha um defeito honesto: perguntar
+*"comida fora de casa"* trazia farmácia entre os primeiros resultados.
+
+## O diagnóstico
+
+O problema é **assimetria de recuperação**. A pergunta é uma frase em
+português; o documento indexado é um nome curto em maiúsculas. São
+distribuições de texto diferentes.
+
+E o modelo usado, `paraphrase-multilingual-MiniLM`, é treinado para
+similaridade **simétrica** — pares de frases parecidas entre si. Ele
+compara comerciante com comerciante muito bem (daí os 91% de acerto do
+catálogo) e pergunta com nome curto muito mal.
+
+Isso revela algo que estava escondido: **os dois usos de busca vetorial
+no lab têm requisitos diferentes**, e estavam sendo tratados com a mesma
+ferramenta.
+
+## As três saídas, medidas
+
+Precisão no top-5, sobre as 80 compras do laboratório, em 6 perguntas:
+
+| Estratégia | Precisão |
+|---|---|
+| Indexar `DESCRIÇÃO (Categoria)` | **23%** |
+| Indexar a **definição da categoria** junto | **83%** |
+| + **rotear a pergunta** para uma categoria antes de buscar | **97%** |
+
+**Enriquecer o documento, não a consulta.** O texto indexado passou de
+`CANTINA DO ZECA (Alimentacao)` para `CANTINA DO ZECA. Alimentacao:
+restaurante, bar, lanchonete, padaria, delivery de comida, comer fora
+de casa`. Agora o documento contém as palavras que uma pessoa usaria ao
+perguntar. Esse é o ponto: a ponte entre o vocabulário da fatura e o
+vocabulário da pergunta.
+
+**Rotear antes de buscar.** A pergunta é comparada com a definição de
+cada categoria (11 vetores, custo irrisório) e a busca é filtrada pela
+vencedora. Isso elimina de uma vez o ruído das outras categorias, em
+vez de torcer para o ranking resolver.
+
+## Quando NÃO rotear — e como saber
+
+Nem toda pergunta é sobre uma categoria. *"Compras acima de 500 reais"*
+é sobre valor. Forçar um filtro ali dá resposta errada com cara de
+certa, que é o pior tipo de erro.
+
+O critério para distinguir foi **medido**, não escolhido. Comparando 8
+perguntas sobre categoria com 7 que não são:
+
+| Critério | Perguntas sobre categoria | Perguntas que não são | Separa? |
+|---|---|---|---|
+| Score absoluto da 1ª | 0,513 a 0,926 | até **0,750** | **Não** |
+| **Margem** entre a 1ª e a 2ª | 7 de 8 acima de 0,08 | todas abaixo de 0,078 | **Sim** |
+
+Faz sentido quando se pensa: quando a pergunta tem assunto, uma
+categoria se destaca das outras. Quando não tem, várias ficam
+igualmente mornas. **É o empate, não o valor absoluto, que denuncia a
+ausência de assunto.**
+
+A única pergunta de categoria que fica abaixo do corte —
+*"corridas de aplicativo"* — é justamente uma que o roteador erraria
+(ele a associa a Assinaturas, por causa de "aplicativo"). Abster-se ali
+é o comportamento correto: a busca passa a varrer tudo, sem fingir
+certeza.
+
+## E a solução de raiz?
+
+Trocar por um modelo treinado para recuperação **assimétrica** — a
+família `e5` ou o `bge-m3`, que usam prefixos `query:` e `passage:` —
+resolveria o problema na origem. Mas os multilingues dessa família
+passam de 1 GB e disputariam memória com o LLM numa VM de 8 GB.
+
+Enriquecer o índice e rotear a consulta custa zero de memória e
+resolveu 97% do caso. Essa é a troca que se faz na prática: **antes de
+trocar o modelo, verifique se o problema está em como você indexou.**
