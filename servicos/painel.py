@@ -23,14 +23,36 @@ registro = comum.log("painel")
 
 app = FastAPI(title="Painel de Gastos", docs_url=None, redoc_url=None)
 
-estado = {
-    "compras": [],
-    "por_categoria": defaultdict(float),
-    "por_origem": defaultdict(int),
-    "por_fatura": defaultdict(lambda: {"linhas": 0, "total": 0.0, "banco": "?"}),
-    "total": 0.0,
-}
+# Guardado por CHAVE (fatura, linha), nao em lista.
+#
+# Somar tudo que passa no topico parece natural e esta errado: depois de
+# um ./lab.sh replay o mesmo lancamento volta a ser publicado, e o
+# painel mostrava 240 compras e R$ 80.370 onde existiam 80 compras e
+# R$ 26.790 -- o triplo, por ter processado o historico tres vezes.
+#
+# Com a chave, reprocessar SUBSTITUI. E a mesma idempotencia que o
+# indice no Qdrant precisa. Num pipeline em que o replay e um recurso,
+# todo consumidor que acumula estado tem de ser idempotente.
+estado = {"compras": {}}
 trava = threading.Lock()
+
+
+def _agregar():
+    """Recalcula os totais a partir das compras unicas."""
+    por_categoria, por_origem = defaultdict(float), defaultdict(int)
+    por_fatura = defaultdict(lambda: {"linhas": 0, "total": 0.0, "banco": "?"})
+    total = 0.0
+
+    for c in estado["compras"].values():
+        por_categoria[c["categoria"]] += c["valor"]
+        por_origem[c["origem_da_categoria"]] += 1
+        total += c["valor"]
+        f = por_fatura[c["fatura_id"]]
+        f["linhas"] += 1
+        f["total"] += c["valor"]
+        f["banco"] = c.get("banco", "?")
+
+    return por_categoria, por_origem, por_fatura, round(total, 2)
 
 CORES = [
     "#2563eb", "#16a34a", "#ea580c", "#9333ea", "#0891b2",
@@ -57,14 +79,8 @@ def consumir():
             continue
 
         with trava:
-            estado["compras"].append(c)
-            estado["por_categoria"][c["categoria"]] += c["valor"]
-            estado["por_origem"][c["origem_da_categoria"]] += 1
-            estado["total"] += c["valor"]
-            f = estado["por_fatura"][c["fatura_id"]]
-            f["linhas"] += 1
-            f["total"] += c["valor"]
-            f["banco"] = c.get("banco", "?")
+            chave = (c.get("fatura_id"), c.get("linha"))
+            estado["compras"][chave] = c
 
 
 @app.on_event("startup")
@@ -75,16 +91,17 @@ def iniciar():
 @app.get("/dados")
 def dados():
     with trava:
-        categorias = sorted(estado["por_categoria"].items(), key=lambda x: -x[1])
-        maiores = sorted(estado["compras"], key=lambda c: -c["valor"])[:12]
+        por_categoria, por_origem, por_fatura, total = _agregar()
+        categorias = sorted(por_categoria.items(), key=lambda x: -x[1])
+        maiores = sorted(estado["compras"].values(), key=lambda c: -c["valor"])[:12]
         return {
-            "total": round(estado["total"], 2),
+            "total": total,
             "quantidade": len(estado["compras"]),
             "categorias": [{"nome": n, "valor": round(v, 2)} for n, v in categorias],
-            "origem": dict(estado["por_origem"]),
+            "origem": dict(por_origem),
             "faturas": [
                 {"id": k, "banco": v["banco"], "linhas": v["linhas"], "total": round(v["total"], 2)}
-                for k, v in estado["por_fatura"].items()
+                for k, v in por_fatura.items()
             ],
             "maiores": [
                 {
