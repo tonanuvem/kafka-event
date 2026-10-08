@@ -24,11 +24,11 @@ Amazon Q CLI quanto pelo MCP Inspector.
 import json
 import os
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 import comum
 
-servidor = FastMCP("faturas-fiap")
+servidor = MCPServer("faturas-fiap")
 
 ALUNO = os.environ.get("ALUNO", "aluno-sem-nome")
 
