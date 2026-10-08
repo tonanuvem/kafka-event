@@ -32,9 +32,28 @@ from datetime import datetime, timezone
 import httpx
 from qdrant_client import models
 
+import re
+
 import comum
 
 registro = comum.log("categoriza")
+
+# Prefixo de intermediador de pagamento: "IFD*", "MP *", "PAYGO*", "DL*".
+# Nao diz nada sobre o que foi comprado e so atrapalha o embedding.
+PREFIXO_ADQUIRENTE = re.compile(r"^[A-Z0-9]{2,8}\s?\*\s?")
+PARCELA = re.compile(r"\bPARC\s+\d{2}/\d{2}\b", re.I)
+
+
+def normalizar(descricao):
+    """Limpa o ruido da maquininha antes de virar vetor.
+
+    O embedding trabalha com significado, e "IFD*" nao tem nenhum. Tirar
+    esses pedacos melhora a similaridade sem custo nenhum.
+    """
+    texto = PREFIXO_ADQUIRENTE.sub("", descricao)
+    texto = PARCELA.sub("", texto)
+    texto = re.sub(r"\s{2,}", " ", texto).strip()
+    return texto or descricao
 
 GRUPO = os.environ.get("GRUPO", "grupo-categoriza")
 LIMIAR = float(os.environ.get("LIMIAR_CATALOGO", "0.80"))
@@ -47,10 +66,33 @@ with open("comerciantes.json", encoding="utf-8") as f:
 
 ESPERA_LOTE = 4.0  # segundos sem mensagem nova antes de fechar o lote
 
+# Abaixo deste score, o "vizinho mais proximo" e ruido: nomes curtos e
+# abreviados produzem vizinhos que casam por semelhanca de string, nao
+# de significado (ex.: "OXXO ESTACAO LESTE" casa com "ESTAC PATIO
+# NORTE"). Mandar isso como exemplo para o LLM PIORA a resposta -- RAG
+# com recuperacao ruim e pior do que RAG nenhum. Entao filtramos.
+LIMIAR_EXEMPLO = float(os.environ.get("LIMIAR_EXEMPLO", "0.72"))
+
+# O que cada categoria significa. Com vizinho ruim, e isto que sustenta
+# a decisao do modelo.
+GUIA_DE_CATEGORIAS = (
+    "Transporte=combustivel, estacionamento, app de corrida, pedagio; "
+    "Alimentacao=restaurante, bar, padaria, delivery, loja de conveniencia; "
+    "Mercado=supermercado, acougue, hortifruti, laticinios; "
+    "Saude=farmacia, clinica, laboratorio, suplemento, plano; "
+    "Assinaturas=servico digital recorrente (streaming, nuvem, software); "
+    "Compras=loja de varejo, e-commerce, utilidades, papelaria, vestuario; "
+    "Educacao=escola, faculdade, curso, academia; "
+    "Viagem=passagem, hotel, locadora, seguro viagem; "
+    "Casa=conta de consumo, condominio, manutencao; "
+    "Pets=pet shop, veterinario; "
+    "Outros=pessoa fisica ou nao identificavel"
+)
+
 
 def vizinhos(qdrant, descricao, quantos=3):
     """Os `quantos` comerciantes mais parecidos do catalogo."""
-    vetor = comum.vetorizar([descricao], tipo="query")[0]
+    vetor = comum.vetorizar([normalizar(descricao)])[0]
     achados = qdrant.query_points(
         collection_name=comum.COLECAO_CATALOGO,
         query=vetor,
@@ -76,14 +118,19 @@ def perguntar_ao_llm(pendentes):
     """
     linhas = []
     for n, item in enumerate(pendentes, start=1):
-        exemplos = ", ".join(
-            f"{v['descricao']}={v['categoria']}" for v in item["vizinhos"][:3]
-        )
-        linhas.append(f"{n}. \"{item['compra']['descricao']}\" (parecidos: {exemplos})")
+        # So entra como exemplo o vizinho confiavel. Vizinho fraco e
+        # ruido e empurra o modelo para a categoria errada.
+        bons = [v for v in item["vizinhos"] if v["score"] >= LIMIAR_EXEMPLO][:3]
+        descricao = normalizar(item["compra"]["descricao"])
+        if bons:
+            exemplos = ", ".join(f"{v['descricao']}={v['categoria']}" for v in bons)
+            linhas.append(f'{n}. "{descricao}" (parecidos: {exemplos})')
+        else:
+            linhas.append(f'{n}. "{descricao}"')
 
     prompt = (
-        "Classifique cada compra de cartao de credito em UMA categoria.\n"
-        f"Categorias permitidas: {', '.join(CATEGORIAS)}.\n\n"
+        "Classifique cada compra de cartao de credito brasileiro em UMA categoria.\n"
+        f"Categorias: {GUIA_DE_CATEGORIAS}.\n\n"
         + "\n".join(linhas)
         + "\n\nResponda apenas JSON: "
         '{"resultados":[{"n":1,"categoria":"..."}]}'

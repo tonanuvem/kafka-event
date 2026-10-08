@@ -138,7 +138,10 @@ def medir_catalogo(qdrant):
         print("  faturas de exemplo nao montadas -- pulando")
         return
 
-    descricoes = [d for d, _, _ in COMERCIANTES]
+    # Mede como a FATURA apresenta a compra (com cidade colada), nao a
+    # string exata do catalogo. Medir o catalogo contra ele mesmo daria
+    # score 1,000 e um numero bonito que nao significa nada.
+    descricoes = [f"{d} {cidade}" for d, _, cidade in COMERCIANTES]
     t0 = time.time()
     vetores = comum.vetorizar(descricoes)
     dt_vetor = (time.time() - t0) / len(descricoes)
