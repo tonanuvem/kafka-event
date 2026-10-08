@@ -87,21 +87,36 @@ ESPERA_LOTE = 4.0  # segundos sem mensagem nova antes de fechar o lote
 # com recuperacao ruim e pior do que RAG nenhum. Entao filtramos.
 LIMIAR_EXEMPLO = float(os.environ.get("LIMIAR_EXEMPLO", "0.72"))
 
-# Mesmo acima do limiar, a recuperacao so e confiavel se os vizinhos
-# CONCORDAREM entre si. Quando os tres primeiros apontam categorias
-# diferentes, o que se tem e um vetor "hub" -- proximo de tudo e util
-# para nada. No lab, "CLINICA VIDA PLENA" se comporta assim: aparece
-# como vizinho de consultas sem relacao nenhuma. Nesse caso e melhor
-# nao sugerir exemplo e deixar o modelo decidir pelo guia.
+# Exemplos canonicos: um representante de cada categoria, usados quando
+# a recuperacao nao trouxe nada confiavel.
+EXEMPLOS_PADRAO = [
+    {"descricao": "POSTO IPIRANGA CENTRO", "categoria": "Transporte", "score": 1.0},
+    {"descricao": "PANELA DE BARRO REST", "categoria": "Alimentacao", "score": 1.0},
+    {"descricao": "SUPERMERCADO BOA VEZ", "categoria": "Mercado", "score": 1.0},
+]
+
+
 def exemplos_confiaveis(vizinhos):
+    """Escolhe os exemplos que vao no prompt.
+
+    ATENCAO -- isto foi medido, nao deduzido. Duas licoes:
+
+    1) O gemma2:2b PRECISA de exemplos para manter o formato de lista.
+       Sem nenhum exemplo ele responde o item 1 e para: no teste, o
+       zero-shot classificou 1 de 10. Entao nunca devolvemos lista
+       vazia, mesmo quando a recuperacao nao serve.
+
+    2) Vizinho fraco e enganoso. "OXXO ESTACAO LESTE" casa com
+       "ESTAC PATIO NORTE" por semelhanca de string (score 0,884) e
+       empurra a resposta para Transporte. Por isso o filtro de limiar.
+
+    Quando sobra pouco, completamos com exemplos canonicos: ancoram o
+    formato sem apontar para a categoria errada.
+    """
     fortes = [v for v in vizinhos if v["score"] >= LIMIAR_EXEMPLO][:3]
-    if not fortes:
-        return []
-    categorias = {v["categoria"] for v in fortes}
-    if len(categorias) == len(fortes) and len(fortes) > 1:
-        # Todos discordam entre si: recuperacao sem sinal.
-        return []
-    return fortes
+    if fortes:
+        return fortes
+    return EXEMPLOS_PADRAO
 
 # O que cada categoria significa. Com vizinho ruim, e isto que sustenta
 # a decisao do modelo.
