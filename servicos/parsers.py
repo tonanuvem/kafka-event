@@ -191,8 +191,29 @@ def detectar_banco(caminho):
     return None
 
 
+class LayoutDesconhecido(ValueError):
+    """O PDF nao e uma das faturas sinteticas do laboratorio."""
+
+
 def ler_fatura(caminho, banco=None):
-    banco = banco or detectar_banco(caminho)
+    """Le a fatura, detectando o layout quando preciso.
+
+    Repare no `not in LEITORES` em vez de `banco or ...`: um valor
+    informado mas INVALIDO tem de cair na deteccao tambem. A versao
+    anterior usava `banco or detectar_banco(...)`, entao um banco
+    invalido porem "verdadeiro" pulava a deteccao. Foi exatamente o que
+    aconteceu com o valor "string", que o Swagger UI preenche sozinho
+    em campo de texto opcional.
+    """
     if banco not in LEITORES:
-        raise ValueError(f"layout de fatura nao reconhecido (banco={banco})")
+        banco = detectar_banco(caminho)
+
+    if banco not in LEITORES:
+        raise LayoutDesconhecido(
+            "Este PDF nao e uma das faturas sinteticas do laboratorio. "
+            "O lab reconhece apenas fatura_banco_azul.pdf e "
+            "fatura_banco_verde.pdf, que estao em faturas/ no repositorio. "
+            "NAO envie faturas reais: elas contem dados pessoais e "
+            "financeiros, e o armazenamento deste laboratorio e aberto."
+        )
     return banco, LEITORES[banco](caminho)

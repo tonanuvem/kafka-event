@@ -11,7 +11,9 @@ Por que isso importa: o limite default de mensagem do Kafka e 1 MB, e a
 fatura passa disso. Mais ainda, um broker de eventos nao e um sistema de
 arquivos -- empurrar binario grande por ele degrada todo o cluster.
 """
+import enum
 import os
+import tempfile
 import uuid
 from datetime import datetime, timezone
 
@@ -19,6 +21,20 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import RedirectResponse
 
 import comum
+import parsers
+
+
+class Banco(str, enum.Enum):
+    """Enum, e nao texto livre, de proposito.
+
+    Em campo de texto opcional o Swagger UI preenche "string" sozinho, e
+    quem clica em Execute sem editar envia esse valor. Com enum, o
+    Swagger desenha um menu suspenso e a armadilha desaparece.
+    """
+
+    detectar = "detectar"
+    azul = "azul"
+    verde = "verde"
 
 registro = comum.log("produtor")
 
@@ -66,6 +82,29 @@ def _publicar_fatura(conteudo: bytes, nome_arquivo: str, banco: str | None):
     if not conteudo[:4] == b"%PDF":
         raise HTTPException(400, "o arquivo nao parece ser um PDF")
 
+    # VALIDA ANTES DE GRAVAR.
+    #
+    # A ordem aqui importa mais do que parece. Antes, o arquivo era
+    # gravado primeiro e so depois o consumidor descobria que o layout
+    # era desconhecido -- entao uma fatura REAL enviada por engano ja
+    # tinha ido para o armazenamento, que neste lab e publico. Validando
+    # primeiro, o arquivo errado nunca chega a ser guardado.
+    if banco == Banco.detectar.value:
+        banco = None
+
+    with tempfile.NamedTemporaryFile(suffix=".pdf") as tmp:
+        tmp.write(conteudo)
+        tmp.flush()
+        try:
+            banco, _ = parsers.ler_fatura(tmp.name, banco)
+        except parsers.LayoutDesconhecido as e:
+            registro.warning(
+                "recusado antes de gravar: %s (%d KB)", nome_arquivo, len(conteudo) // 1024
+            )
+            raise HTTPException(422, str(e))
+        except Exception as e:
+            raise HTTPException(422, f"nao consegui ler este PDF: {e}")
+
     fatura_id = uuid.uuid4().hex[:12]
     objeto = f"{ALUNO}/{fatura_id}.pdf"
 
@@ -103,28 +142,38 @@ def _publicar_fatura(conteudo: bytes, nome_arquivo: str, banco: str | None):
 
 @app.post("/faturas", tags=["2. Faturas"])
 async def enviar_fatura(
-    arquivo: UploadFile = File(..., description="PDF da fatura"),
-    banco: str | None = Form(None, description="azul ou verde (vazio = detectar)"),
+    arquivo: UploadFile = File(..., description="PDF da fatura sintetica do lab"),
+    banco: Banco = Form(Banco.detectar, description="deixe em 'detectar' se nao souber"),
 ):
     """Sobe um PDF de fatura: arquivo para o S3, evento para o Kafka.
 
-    Compare no Console o tamanho do evento com o tamanho do PDF no
-    S3: e a essencia do claim-check.
+    **Envie apenas as faturas sinteticas do laboratorio**, que estao em
+    `faturas/` no repositorio. NAO envie faturas reais: elas contem
+    dados pessoais e financeiros, e o armazenamento deste laboratorio
+    fica acessivel a quem alcancar a VM.
+
+    PDFs que nao sejam uma das faturas do lab sao recusados aqui mesmo,
+    antes de serem gravados.
+
+    Compare no Console o tamanho do evento com o tamanho do PDF no S3:
+    e a essencia do claim-check.
     """
-    return _publicar_fatura(await arquivo.read(), arquivo.filename or "fatura.pdf", banco)
+    return _publicar_fatura(
+        await arquivo.read(), arquivo.filename or "fatura.pdf", banco.value
+    )
 
 
 @app.post("/faturas/exemplo", tags=["2. Faturas"])
-def enviar_fatura_exemplo(banco: str = Form("azul", description="azul ou verde")):
+def enviar_fatura_exemplo(banco: Banco = Form(Banco.azul, description="qual fatura do lab enviar")):
     """Atalho: usa uma das faturas sinteticas que ja vem no repositorio.
 
     Serve para disparar o pipeline com um clique, sem precisar procurar
     arquivo no disco.
     """
-    if banco not in ("azul", "verde"):
-        raise HTTPException(400, "banco deve ser 'azul' ou 'verde'")
+    if banco == Banco.detectar:
+        banco = Banco.azul
 
-    caminho = os.path.join(PASTA_EXEMPLOS, f"fatura_banco_{banco}.pdf")
+    caminho = os.path.join(PASTA_EXEMPLOS, f"fatura_banco_{banco.value}.pdf")
     if not os.path.exists(caminho):
         raise HTTPException(404, f"fatura de exemplo nao encontrada: {caminho}")
 
